@@ -46,7 +46,8 @@ function defaultShouldRetry(error: any, attempt: number): boolean {
     error.code === "ENOTFOUND" ||
     error.code === "ECONNRESET" ||
     error.code === "ECONNREFUSED" ||
-    error.code === "ETIMEDOUT"
+    error.code === "ETIMEDOUT" ||
+    error.code === "EPIPE"
   ) {
     return true;
   }
@@ -100,6 +101,25 @@ function defaultShouldRetry(error: any, attempt: number): boolean {
   // Abort signal errors should not be retried
   if (error.name === "AbortError" || error.code === "ABORT_ERR") {
     return false;
+  }
+
+  // Check for premature close and connection errors by message content
+  const errorMessage = error.message?.toLowerCase();
+  if (errorMessage) {
+    const connectionErrorPatterns = [
+      "premature close",
+      "premature end",
+      "connection reset",
+      "socket hang up",
+      "aborted",
+      "overloaded",
+    ];
+
+    if (
+      connectionErrorPatterns.some((pattern) => errorMessage.includes(pattern))
+    ) {
+      return true;
+    }
   }
 
   // Default to not retrying unknown errors
@@ -456,4 +476,74 @@ export function withLLMRetry(options: Partial<RetryOptions> = {}) {
     jitterFactor: 0.4, // Slightly more jitter to spread load
     ...options,
   });
+}
+
+/**
+ * Functional wrapper for async generators with retry logic
+ *
+ * @example
+ * ```typescript
+ * const retryableStream = retryAsyncGenerator(
+ *   async function* () {
+ *     // Generator implementation
+ *     yield* someStreamingAPI();
+ *   },
+ *   { maxAttempts: 3, baseDelay: 1000 }
+ * );
+ *
+ * for await (const chunk of retryableStream) {
+ *   console.log(chunk);
+ * }
+ * ```
+ */
+export async function* retryAsyncGenerator<T>(
+  generatorFactory: () => AsyncGenerator<T>,
+  options: RetryOptions = {},
+): AsyncGenerator<T> {
+  const config = { ...DEFAULT_RETRY_OPTIONS, ...options };
+  let lastError: any;
+
+  for (let attempt = 1; attempt <= config.maxAttempts; attempt++) {
+    try {
+      const generator = generatorFactory();
+
+      // Create retryable generator
+      yield* createRetryableAsyncGenerator(
+        generator,
+        config,
+        generatorFactory,
+        null,
+        [],
+        attempt,
+      );
+      return; // Successfully completed
+    } catch (error) {
+      lastError = error;
+
+      // Check if we should retry this error
+      if (!config.shouldRetry(error, attempt)) {
+        throw error;
+      }
+
+      // Don't delay on the last attempt
+      if (attempt === config.maxAttempts) {
+        break;
+      }
+
+      // Calculate delay and wait
+      const delay = calculateDelay(
+        attempt,
+        config.baseDelay,
+        config.maxDelay,
+        config.jitterFactor,
+        error,
+      );
+
+      config.onRetry(error, attempt, delay);
+      await sleep(delay);
+    }
+  }
+
+  // If we get here, all attempts failed
+  throw lastError;
 }

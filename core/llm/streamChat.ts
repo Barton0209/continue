@@ -6,6 +6,7 @@ import { FromCoreProtocol, ToCoreProtocol } from "../protocol";
 import { IMessenger, Message } from "../protocol/messenger";
 import { Telemetry } from "../util/posthog";
 import { TTS } from "../util/tts";
+import { retryAsyncGenerator } from "./utils/retry.js";
 
 export async function* llmStreamChat(
   configHandler: ConfigHandler,
@@ -120,11 +121,20 @@ export async function* llmStreamChat(
 
       return next.value;
     } else {
-      const gen = model.streamChat(
-        messages,
-        abortController.signal,
-        completionOptions,
-        messageOptions,
+      // Wrap streamChat with retry logic for premature close errors
+      const gen = retryAsyncGenerator(
+        () =>
+          model.streamChat(
+            messages,
+            abortController.signal,
+            completionOptions,
+            messageOptions,
+          ),
+        {
+          maxAttempts: 3,
+          baseDelay: 1000,
+          maxDelay: 10000,
+        },
       );
       let next = await gen.next();
       while (!next.done) {

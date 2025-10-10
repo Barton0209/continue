@@ -146,6 +146,105 @@ describe("Retry Functionality", () => {
       expect(mockFn).toHaveBeenCalledTimes(1);
     });
 
+    it("should retry on EPIPE errors", async () => {
+      const error = new Error("EPIPE");
+      (error as any).code = "EPIPE";
+      const mockFn = jest
+        .fn()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValue("success");
+
+      const result = await retryAsync(mockFn, {
+        maxAttempts: 2,
+        baseDelay: 10,
+      });
+
+      expect(result).toBe("success");
+      expect(mockFn).toHaveBeenCalledTimes(2);
+    });
+
+    it("should retry on premature close errors", async () => {
+      const error = new Error(
+        "The response was cancelled mid-stream. Try again. (Premature Close).",
+      );
+      const mockFn = jest
+        .fn()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValue("success");
+
+      const result = await retryAsync(mockFn, {
+        maxAttempts: 2,
+        baseDelay: 10,
+      });
+
+      expect(result).toBe("success");
+      expect(mockFn).toHaveBeenCalledTimes(2);
+    });
+
+    it("should retry on connection reset errors", async () => {
+      const error = new Error("Connection reset by peer");
+      const mockFn = jest
+        .fn()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValue("success");
+
+      const result = await retryAsync(mockFn, {
+        maxAttempts: 2,
+        baseDelay: 10,
+      });
+
+      expect(result).toBe("success");
+      expect(mockFn).toHaveBeenCalledTimes(2);
+    });
+
+    it("should retry on socket hang up errors", async () => {
+      const error = new Error("socket hang up");
+      const mockFn = jest
+        .fn()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValue("success");
+
+      const result = await retryAsync(mockFn, {
+        maxAttempts: 2,
+        baseDelay: 10,
+      });
+
+      expect(result).toBe("success");
+      expect(mockFn).toHaveBeenCalledTimes(2);
+    });
+
+    it("should retry on overloaded errors", async () => {
+      const error = new Error("The service is overloaded");
+      const mockFn = jest
+        .fn()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValue("success");
+
+      const result = await retryAsync(mockFn, {
+        maxAttempts: 2,
+        baseDelay: 10,
+      });
+
+      expect(result).toBe("success");
+      expect(mockFn).toHaveBeenCalledTimes(2);
+    });
+
+    it("should handle case insensitive connection error messages", async () => {
+      const error = new Error("PREMATURE CLOSE");
+      const mockFn = jest
+        .fn()
+        .mockRejectedValueOnce(error)
+        .mockResolvedValue("success");
+
+      const result = await retryAsync(mockFn, {
+        maxAttempts: 2,
+        baseDelay: 10,
+      });
+
+      expect(result).toBe("success");
+      expect(mockFn).toHaveBeenCalledTimes(2);
+    });
+
     it("should use custom shouldRetry function", async () => {
       const mockFn = jest.fn().mockRejectedValue(new Error("Custom Error"));
       const customShouldRetry = jest.fn().mockReturnValue(true);
